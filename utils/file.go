@@ -6,7 +6,7 @@ import (
 	"net/http"
 )
 
-func ViewHandler(w http.ResponseWriter, r *http.Request) {
+func DirectoryHandler(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path[len("/view/"):] // "." by default make it
 	if path == "" {
 		p, err := LoadDir(".")
@@ -19,8 +19,12 @@ func ViewHandler(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			fmt.Fprintf(w, "<h1>An error happened loading the directory: %s</h1>", err)
 		}
-		fmt.Fprintf(w, "<h1>%s</h1><p>%s</p>", p.Path, p.Files)
+		fmt.Fprintf(w, "<h1>Path/%s</h1><p>Files</p><p>%s</p>", p.Path, p.Files)
 	}
+}
+
+func FileHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "<p>AAAAAAAa</p>")
 }
 
 func TestHandler(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +49,8 @@ func LoadDir(path string) (*Dir, error) {
 }
 
 func main() {
-	http.HandleFunc("/view/", ViewHandler)
+	http.HandleFunc("/view/", DirectoryHandler)
+	http.HandleFunc("/file/", FileHandler)
 	http.HandleFunc("/test/", TestHandler)
 	http.ListenAndServe(":8080", nil)
 }
