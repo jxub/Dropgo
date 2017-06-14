@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
+	_ "log"
 	"net/http"
+	"os"
 )
 
 func DirectoryHandler(w http.ResponseWriter, r *http.Request) {
@@ -11,20 +13,37 @@ func DirectoryHandler(w http.ResponseWriter, r *http.Request) {
 	if path == "" {
 		p, err := LoadDir(".")
 		if err != nil {
-			fmt.Fprintf(w, "<h1>An error happened loading the directory: %s</h1>", err)
+			ShowError(&w, err)
 		}
-		fmt.Fprintf(w, "<h1>%s</h1><p>%s</p>", p.Path, p.Files)
+		fmt.Fprintf(w, "<h1>Path/<br>%s</h1><p>Files/<br>%s</p>", p.Path, p.Files)
 	} else {
 		p, err := LoadDir(path)
 		if err != nil {
-			fmt.Fprintf(w, "<h1>An error happened loading the directory: %s</h1>", err)
+			ShowError(&w, err)
 		}
-		fmt.Fprintf(w, "<h1>Path/%s</h1><p>Files</p><p>%s</p>", p.Path, p.Files)
+		fmt.Fprintf(w, "<h1>Path/<br>%s</h1><p>Files/<br>%s</p>", p.Path, p.Files)
 	}
 }
 
 func FileHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "<p>AAAAAAAa</p>")
+	name := r.URL.Path[len("/file/"):] // restricted to main dir atm
+	if name == "" {
+		f, err := LoadFile("drop.go")
+		if err != nil {
+			ShowError(&w, err)
+		}
+		fmt.Fprintf(w, "<h2>%s</h2><br><h1>%s</h1><p>%s</p>", f.Path, f.Name, f.Content)
+	} else {
+		f, err := LoadFile(name)
+		if err != nil {
+			ShowError(&w, err)
+		}
+		fmt.Fprintf(w, "<h2>%s</h2><br><h1>%s</h1><p>%s</p>", f.Path, f.Name, f.Content)
+	}
+}
+
+func ShowError(w *http.ResponseWriter, err error) {
+	fmt.Fprintf(*w, "<h1>An error happened: %s</h1>", err)
 }
 
 func TestHandler(w http.ResponseWriter, r *http.Request) {
@@ -34,6 +53,25 @@ func TestHandler(w http.ResponseWriter, r *http.Request) {
 type Dir struct {
 	Path  string
 	Files []string
+}
+
+type File struct {
+	Name    string
+	Path    string
+	Content []byte
+}
+
+func LoadFile(name string) (*File, error) {
+	content, err := ioutil.ReadFile(name)
+	if err != nil {
+		return nil, err
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	path := dir + name
+	return &File{Name: name, Path: path, Content: content}, nil
 }
 
 func LoadDir(path string) (*Dir, error) {
