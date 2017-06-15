@@ -1,57 +1,115 @@
 package main
 
 import (
-	"encoding/json"
+	"bytes"
 	"fmt"
-	_ "github.com/gorilla/mux"
 	"io/ioutil"
 	"log"
-	_ "net/http"
-	_ "os"
-	_ "time"
+	"net/http"
+	"os"
 )
 
-// File is the type for a displayed file
-type File string
+// STRUCTS
 
-// Dir is the type for a directory. Its values are either dirs or files
-type Dir map[string]interface{}
+type Dir struct {
+	Path  string
+	Files []File
+}
 
-func readDir() {
-	files, err := ioutil.ReadDir(".")
+type File struct {
+	Name    string
+	Path    string
+	Content []byte
+}
+
+// HANDLERS
+
+func DirectoryHandler(w http.ResponseWriter, r *http.Request) {
+	path := getPath(r, "/dir/")
+	dir, err := loadDir(path)
 	if err != nil {
-		log.Fatal(err)
+		errorTemplate(&w, err)
 	}
+	var fileBuf bytes.Buffer
+	for _, file := range dir.Files {
+		fileBuf.WriteString(file.getFileData())
+	}
+	fmt.Fprintf(w, "<h1>Path/<br>%s</h1><p>Files/<br>%s</p>", dir.Path, fileBuf.String())
+}
 
-	for _, file := range files {
-		fmt.Println(file.Name())
+func FileHandler(w http.ResponseWriter, r *http.Request) {
+	path := getPath(r, "/file/")
+	f, err := loadFile(path)
+	if err != nil {
+		errorTemplate(&w, err)
+	}
+	fmt.Fprintf(w, "<html><h2>%s</h2><br><h1>%s</h1><p>%s</p></html>", f.Path, f.Name, f.Content)
+}
+
+func TestHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "<h1>Hello World!</h1><p>...At last</p>")
+}
+
+// LOADERS
+
+func loadFile(name string) (*File, error) {
+	content, err := ioutil.ReadFile(name)
+	check(err)
+	dir, err := os.Getwd()
+	check(err)
+	path := dir + "/" + name
+	return &File{Name: name, Path: path, Content: content}, nil
+}
+
+func loadDir(path string) (*Dir, error) {
+	dir, err := ioutil.ReadDir(path)
+	check(err)
+	files := make([]File, 10)
+	for _, file := range dir {
+		f := &File{Name: file.Name(), Path: path, Content: nil}
+		files = append(files, *f)
+	}
+	return &Dir{Path: path, Files: files}, nil
+}
+
+// HELPERS
+
+func (f *File) peek() string {
+	return fmt.Sprintf("%s / is the file name", f.Name)
+}
+
+func (f *File) getFileData() string {
+	return fmt.Sprintf("%s\n%s\n%s", f.Name, f.Path, string(f.Content[:]))
+}
+
+func getPath(r *http.Request, uri string) string {
+	path := r.URL.Path[len(uri):]
+	if len(path) == 0 {
+		return "."
+	}
+	return path
+}
+
+func (f *File) snapshot() (*string, *string) {
+	return &f.Name, &f.Path
+}
+
+func check(err error) {
+	if err != nil {
+		panic(err)
 	}
 }
+
+func errorTemplate(w *http.ResponseWriter, err error) {
+	log.Fatal(err)
+	fmt.Fprintf(*w, "<h1>An error happened: %s</h1>", err)
+}
+
+// MAIN
 
 func main() {
-	readDir()
+	http.HandleFunc("/dir/", DirectoryHandler)
+	http.HandleFunc("/file/", FileHandler)
+	http.HandleFunc("/test/", TestHandler)
+	http.ListenAndServe(":8080", nil)
 }
-
-/*
-func main() {
-	r := mux.NewRouter()
-	r.HandleFunc("/", HomeHandler)
-	PORT := ":8888"
-
-	srv := &http.Server{
-		Handler:      r,
-		Addr:         "127.0.0.1:8080",
-		WriteTimeout: 15 * time.Second,
-		ReadTimeout:  15 * time.Second,
-	}
-
-	log.Fatal(srv.ListenAndServe())
-	log.Print("Running server on " + PORT)
-	http.HandleFunc("/", exposeFile)
-	log.Fatal(http.ListenAndServe(PORT, nil))
-}
-
-func exposeFile(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, "")
-}
-*/
