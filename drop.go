@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	_ "html/template"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -64,19 +65,34 @@ func loadFile(name string) (*File, error) {
 func loadDir(path string) (*Dir, error) {
 	dir, err := ioutil.ReadDir(path)
 	check(err)
+	dirPath, err := os.Getwd()
+	check(err)
 	files := make([]File, 10)
 	for _, file := range dir {
-		f := &File{Name: file.Name(), Path: path, Content: nil}
+		filePath := dirPath + "/" + file.Name()
+		f := &File{Name: file.Name(), Path: filePath, Content: nil}
 		files = append(files, *f)
 	}
-	return &Dir{Path: path, Files: files}, nil
+	return &Dir{Path: dirPath, Files: files}, nil
 }
+
+// WRITERS
+
+/*
+func writeFile(name string) error {
+	content, err := ioutil.ReadFile(name)
+	if err != nil {
+		str := "this is a dummy value"
+		dummy := []byte(str)
+		err := ioutil.WriteFile(name, dummy, 0644)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}*/
 
 // HELPERS
-
-func (f *File) peek() string {
-	return fmt.Sprintf("%s / is the file name", f.Name)
-}
 
 func (f *File) getFileData() string {
 	return fmt.Sprintf("%s\n%s\n%s", f.Name, f.Path, string(f.Content[:]))
@@ -85,7 +101,11 @@ func (f *File) getFileData() string {
 func getPath(r *http.Request, uri string) string {
 	path := r.URL.Path[len(uri):]
 	if len(path) == 0 {
-		return "."
+		path = "."
+	} else {
+		dir := "/" + path
+		err := os.Chdir(dir)
+		check(err)
 	}
 	return path
 }
@@ -105,11 +125,25 @@ func errorTemplate(w *http.ResponseWriter, err error) {
 	fmt.Fprintf(*w, "<h1>An error happened: %s</h1>", err)
 }
 
+// TEST
+
+func testRead(file string) {
+	fmt.Printf("File: %s", file)
+	content, err := ioutil.ReadFile(file)
+	check(err)
+	fmt.Printf("%s", content)
+}
+
 // MAIN
 
 func main() {
+	testRead("dummy.txt")
+	testRead("old.go")
 	http.HandleFunc("/dir/", DirectoryHandler)
 	http.HandleFunc("/file/", FileHandler)
 	http.HandleFunc("/test/", TestHandler)
-	http.ListenAndServe(":8080", nil)
+	err := http.ListenAndServe(":8080", nil)
+	if err != nil {
+		log.Fatal("ListenAndServe Error: ", err)
+	}
 }
