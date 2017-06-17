@@ -15,12 +15,31 @@ import (
 	"syscall"
 )
 
-// STRUCTS
+// CONSTANTS
+
+const (
+	// constats for port and urls
+	port      = ":8080"
+	base_url  = "http://localhost" + port
+	files_url = base_url + "/file/"
+	dirs_url  = base_url + "/dir/"
+	test_url  = base_url + "/test/"
+	// constants for stdout formatting
+	line  = 75
+	pad   = 73
+	char  = "#"
+	space = " "
+)
+
+// STRUCTS AND TYPES
+
+// Files is a helper type for a list of files
+type Files []File
 
 // Dir is the type for a directory, with a path and its files/dirs
 type Dir struct {
 	Path  string `json:"path"`
-	Files []File `json:"files"`
+	Files Files  `json:"files"`
 }
 
 // File is the tye for a file with a name, path and content
@@ -28,6 +47,7 @@ type File struct {
 	Name    string `json:"name"`
 	Path    string `json:"path"`
 	Content []byte `json:"content"`
+	IsDir   bool   `json:"is_dir"`
 }
 
 // INTERFACES
@@ -45,12 +65,16 @@ func DirectoryHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		errorTemplate(&w, err)
 	}
-	dir.template(&w)
+	// dir.template(&w)
+
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "    	")
+	enc.Encode(&dir)
 }
 
 // FileHandler serves the requests to the /file/ path
 func FileHandler(w http.ResponseWriter, r *http.Request) {
-	f, err := loadFile(r, "/file")
+	f, err := loadFile(r, "/file/")
 	if err != nil {
 		errorTemplate(&w, err)
 	}
@@ -80,10 +104,13 @@ func loadDir(r *http.Request, uri string) (*Dir, error) {
 		return nil, err
 	}
 	// creating the Dir object
-	files := make([]File, 10)
+	files := make(Files, 10)
 	for _, file := range dir {
-		filePath := dirPath + "/" + file.Name()
-		f := &File{Name: file.Name(), Path: filePath, Content: nil}
+		name := file.Name()
+		filePath := dirPath + "/" + name
+		isdir, err := isDir(filePath)
+		check(err)
+		f := &File{Name: name, Path: filePath, Content: nil, IsDir: isdir}
 		files = append(files, *f)
 	}
 	return &Dir{Path: dirPath, Files: files}, nil
@@ -109,32 +136,16 @@ func loadFile(r *http.Request, uri string) (*File, error) {
 			return nil, err
 		}
 		// returning the fresh file
-		return &File{Name: name, Path: path, Content: nil}, nil
+		return &File{Name: name, Path: path, Content: nil, IsDir: false}, nil
 	} else {
 		// returning the existing file
-		return &File{Name: name, Path: path, Content: content}, nil
-	}
-}
-
-// HELPERS
-
-func (f *File) getData() string {
-	return fmt.Sprintf("%s\n%s\n%s", f.Name, f.Path, string(f.Content[:]))
-}
-
-func (f *File) snapshot() (*string, *string) {
-	return &f.Name, &f.Path
-}
-
-func check(err error) {
-	if err != nil {
-		panic(err)
+		return &File{Name: name, Path: path, Content: content, IsDir: false}, nil
 	}
 }
 
 // TEMPLATES
 
-func (dir Dir) template(w *http.ResponseWriter) {
+func (dir *Dir) template(w *http.ResponseWriter) {
 	var fileBuf bytes.Buffer
 	for _, file := range dir.Files {
 		fileBuf.WriteString(file.getData())
@@ -142,22 +153,13 @@ func (dir Dir) template(w *http.ResponseWriter) {
 	fmt.Fprintf(*w, "<h1>Path/<br>%s</h1><p>Files/<br>%s</p>", dir.Path, fileBuf.String())
 }
 
-func (f File) template(w *http.ResponseWriter) {
+func (f *File) template(w *http.ResponseWriter) {
 	fmt.Fprintf(*w, "<html><h2>%s</h2><br><h1>%s</h1><p>%s</p></html>", f.Path, f.Name, f.Content)
 }
 
 func errorTemplate(w *http.ResponseWriter, err error) {
 	fmt.Fprintf(*w, "<h1>An error happened: %s</h1>", err)
 }
-
-/*
-func dirTemplate(w *http.ResponseWriter, dir Dir, fileBuf bytes.Buffer) {
-	fmt.Fprintf(*w, "<h1>Path/<br>%s</h1><p>Files/<br>%s</p>", dir.Path, fileBuf.String())
-}
-
-func fileTemplate(w *http.ResponseWriter, f File) {
-	fmt.Fprintf(*w, "<html><h2>%s</h2><br><h1>%s</h1><p>%s</p></html>", f.Path, f.Name, f.Content)
-}*/
 
 // TEST
 
@@ -173,6 +175,27 @@ func testRead(file string) {
 	fmt.Printf("%s", content)
 }
 
+// HELPERS
+
+func isDir(path string) (bool, error) {
+	fileInfo, err := os.Stat(path)
+	return fileInfo.IsDir(), err
+}
+
+func (f *File) getData() string {
+	return fmt.Sprintf("%s\n%s\n%s", f.Name, f.Path, string(f.Content[:]))
+}
+
+func (f *File) snapshot() (*string, *string) {
+	return &f.Name, &f.Path
+}
+
+func check(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
 // MAIN
 
 func main() {
@@ -183,12 +206,6 @@ func main() {
 	// set up logging
 	log.SetOutput(os.Stdout)
 	// register some constants for the messages
-	const (
-		line  = 75
-		pad   = 73
-		char  = "#"
-		space = " "
-	)
 	// print the welcome message and some hints
 	decor := strings.Repeat(char, line)
 	padding := char + strings.Repeat(space, pad) + char
@@ -196,29 +213,31 @@ func main() {
 	fmt.Printf("%s\n%s\n%s\n%s\n", empty, empty, decor, padding)
 	fmt.Println(char + "  Welcome to Dropgo, your filesystem exposed on the browser... yikes!!!  " + char)
 	fmt.Printf("%s\n%s\n%s\n%s\n", padding, decor, empty, empty)
-	log.Println("Badass server going on @ http://localhost:8080/")
+	log.Printf("Badass server going on @ %s\n", base_url)
+	// register the base handler
+	http.HandleFunc("/", http.NotFound)
 	// register handlers conditionally
 	if *testMode {
 		log.Println("Running the test version")
 		http.HandleFunc("/test/", TestHandler)
-		log.Println("Test template @ http://localhost:8080/test/")
+		log.Printf("Test template @ %s\n", test_url)
 	} else {
 		log.Println("Running the default version")
 		http.HandleFunc("/dir/", DirectoryHandler)
-		log.Println("Dirs visible @ http://localhost:8080/dir/")
+		log.Printf("Dirs visible @ %s\n", dirs_url)
 		http.HandleFunc("/file/", FileHandler)
-		log.Println("File content shown @ http://localhost:8080/file/")
+		log.Printf("File content shown @ %s\n", files_url)
 	}
 	// spawn the goroutine to handle the exit
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-c
-		log.Println("Quitting Dropgo... See ya!")
+		log.Println("Quitting Dropgo... See you!")
 		os.Exit(1)
 	}()
 	// serve the app and handle errors
-	err := http.ListenAndServe(":8080", nil)
+	err := http.ListenAndServe(port, nil)
 	if err != nil {
 		log.Fatal("ListenAndServe Error: ", err)
 	}
