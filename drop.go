@@ -15,20 +15,28 @@ import (
 	"syscall"
 )
 
-// CONSTANTS
+// CONF CONSTANTS
 
 const (
 	// constats for port and urls
-	port      = ":8080"
-	base_url  = "http://localhost" + port
-	files_url = base_url + "/file/"
-	dirs_url  = base_url + "/dir/"
-	test_url  = base_url + "/test/"
+	port         = ":8080"
+	base_url     = "http://localhost" + port
+	file_mapping = "/file/"
+	dir_mapping  = "/dir/"
+	test_mapping = "/test/"
+	files_url    = base_url + file_mapping
+	dirs_url     = base_url + dir_mapping
+	test_url     = base_url + test_mapping
+	// constants for login
+	username = "admin"
+	password = "admin"
 	// constants for stdout formatting
 	line  = 75
 	pad   = 73
 	char  = "#"
 	space = " "
+	// constant for json formatting
+	indent = "	"
 )
 
 // STRUCTS AND TYPES
@@ -42,7 +50,9 @@ type Dir struct {
 	Files Files  `json:"files"`
 }
 
-// File is the tye for a file with a name, path and content
+// File is the tpye for an entiyt inside a directory, but it can be another dir
+// if IsDir option is true. Naming is mostly for its many:one mapping to a Dir
+// it has a name, path and content
 type File struct {
 	Name    string `json:"name"`
 	Path    string `json:"path"`
@@ -54,31 +64,56 @@ type File struct {
 
 // Templater is an interface for rendering templates
 type Templater interface {
-	template(w *http.ResponseWriter)
+	Template(w *http.ResponseWriter)
 }
 
 // HANDLERS
 
 // DirectoryHandler serves the requests to the /dir/ path
 func DirectoryHandler(w http.ResponseWriter, r *http.Request) {
-	dir, err := loadDir(r, "/dir/")
+	dir, err := loadDir(r, dir_mapping)
 	if err != nil {
-		errorTemplate(&w, err)
+		http.Error(w, "error loading the directory", http.StatusInternalServerError)
 	}
-	// dir.template(&w)
 
 	enc := json.NewEncoder(w)
-	enc.SetIndent("", "    	")
+	enc.SetIndent("", indent)
 	enc.Encode(&dir)
+
 }
 
 // FileHandler serves the requests to the /file/ path
 func FileHandler(w http.ResponseWriter, r *http.Request) {
-	f, err := loadFile(r, "/file/")
+	f, err := loadFile(r, file_mapping)
 	if err != nil {
-		errorTemplate(&w, err)
+		http.Error(w, "error loading the file", http.StatusInternalServerError)
 	}
-	f.template(&w)
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", indent)
+	enc.Encode(&f)
+}
+
+// MIDDLEWARES
+
+func BasicAuth(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, pass, _ := r.BasicAuth()
+		if user != username || pass != password {
+			http.Error(w, "unauthorized access :(", http.StatusUnauthorized)
+			return
+		}
+		h(w, r)
+	}
+}
+
+func Base64Auth(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="restricted"`)
+		s := strings.SplitN(r.Header.Get("Authorization"), " ", 2)
+		if len(s) != 2 {
+			http.Error(w, "not authorized", http.StatusUnauthorized)
+		}
+	}
 }
 
 // LOADERS
@@ -145,7 +180,7 @@ func loadFile(r *http.Request, uri string) (*File, error) {
 
 // TEMPLATES
 
-func (dir *Dir) template(w *http.ResponseWriter) {
+func (dir *Dir) Template(w *http.ResponseWriter) {
 	var fileBuf bytes.Buffer
 	for _, file := range dir.Files {
 		fileBuf.WriteString(file.getData())
@@ -153,7 +188,7 @@ func (dir *Dir) template(w *http.ResponseWriter) {
 	fmt.Fprintf(*w, "<h1>Path/<br>%s</h1><p>Files/<br>%s</p>", dir.Path, fileBuf.String())
 }
 
-func (f *File) template(w *http.ResponseWriter) {
+func (f *File) Template(w *http.ResponseWriter) {
 	fmt.Fprintf(*w, "<html><h2>%s</h2><br><h1>%s</h1><p>%s</p></html>", f.Path, f.Name, f.Content)
 }
 
@@ -196,6 +231,13 @@ func check(err error) {
 	}
 }
 
+func use(h http.HandlerFunc, middleware ...func(http.HandlerFunc) http.HandlerFunc) http.HandlerFunc {
+	for _, m := range middleware {
+		h = m(h)
+	}
+	return h
+}
+
 // MAIN
 
 func main() {
@@ -219,13 +261,14 @@ func main() {
 	// register handlers conditionally
 	if *testMode {
 		log.Println("Running the test version")
-		http.HandleFunc("/test/", TestHandler)
+		http.HandleFunc(test_mapping, TestHandler)
 		log.Printf("Test template @ %s\n", test_url)
 	} else {
 		log.Println("Running the default version")
-		http.HandleFunc("/dir/", DirectoryHandler)
+		// this handler needs auth
+		http.HandleFunc(dir_mapping, use(DirectoryHandler, BasicAuth))
 		log.Printf("Dirs visible @ %s\n", dirs_url)
-		http.HandleFunc("/file/", FileHandler)
+		http.HandleFunc(file_mapping, FileHandler)
 		log.Printf("File content shown @ %s\n", files_url)
 	}
 	// spawn the goroutine to handle the exit
