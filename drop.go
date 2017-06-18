@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bytes"
+	_ "bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -13,20 +13,22 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+
+	"github.com/gorilla/mux"
+	"github.com/gorilla/securecookie"
+	"github.com/gorilla/sessions"
+	_ "golang.org/x/crypto/bcrypt"
 )
 
 // CONF CONSTANTS
 
 const (
-	// constats for port and urls
-	port         = ":8080"
-	base_url     = "http://localhost" + port
-	file_mapping = "/file/"
-	dir_mapping  = "/dir/"
-	test_mapping = "/test/"
-	files_url    = base_url + file_mapping
-	dirs_url     = base_url + dir_mapping
-	test_url     = base_url + test_mapping
+	// configuration constants for port and urls
+	port      = ":8080"
+	base_url  = "http://localhost" + port
+	files_url = base_url + "/file"
+	dirs_url  = base_url + "/dir"
+	test_url  = base_url + "/test"
 	// constants for login
 	username = "admin"
 	password = "admin"
@@ -37,6 +39,35 @@ const (
 	space = " "
 	// constant for json formatting
 	indent = "	"
+	// html templates
+	indexPage = `
+		<h1>Login</h1>
+		<form method="post" action="/login">
+    	<label for="name">Username</label>
+    	<input type="text" id="name" name="name">
+    	<label for="password">Password</label>
+    	<input type="password" id="password" name="password">
+    	<button type="submit">Login</button>
+		</form>`
+	internalPage = `
+		<h1>Internal</h1>
+		<hr>
+		<small>User: %s</small>
+		<form method="post" action="/logout">
+    	<button type="submit">Logout</button>
+		</form>`
+)
+
+// SESSIONS SETUP
+
+var (
+	// key must have length 16, 24 or 32
+	// we use 32 bytes and AES-256 encryption
+	key           = []byte("another-secret-key-bite-the-dust")
+	store         = sessions.NewCookieStore(key)
+	cookieHandler = securecookie.New(
+		securecookie.GenerateRandomKey(64),
+		securecookie.GenerateRandomKey(32))
 )
 
 // STRUCTS AND TYPES
@@ -60,18 +91,11 @@ type File struct {
 	IsDir   bool   `json:"is_dir"`
 }
 
-// INTERFACES
-
-// Templater is an interface for rendering templates
-type Templater interface {
-	Template(w *http.ResponseWriter)
-}
-
-// HANDLERS
+// CONTENT HANDLERS
 
 // DirectoryHandler serves the requests to the /dir/ path
 func DirectoryHandler(w http.ResponseWriter, r *http.Request) {
-	dir, err := loadDir(r, dir_mapping)
+	dir, err := loadDir(r, "/dir")
 	if err != nil {
 		http.Error(w, "error loading the directory", http.StatusInternalServerError)
 	}
@@ -84,7 +108,7 @@ func DirectoryHandler(w http.ResponseWriter, r *http.Request) {
 
 // FileHandler serves the requests to the /file/ path
 func FileHandler(w http.ResponseWriter, r *http.Request) {
-	f, err := loadFile(r, file_mapping)
+	f, err := loadFile(r, "/file")
 	if err != nil {
 		http.Error(w, "error loading the file", http.StatusInternalServerError)
 	}
@@ -93,26 +117,160 @@ func FileHandler(w http.ResponseWriter, r *http.Request) {
 	enc.Encode(&f)
 }
 
-// MIDDLEWARES
+// HANDLERS FOR LOGGING IN AND OUT, AND RENDERING INTERNAL AND EXTERNAL PAGES
 
-func BasicAuth(h http.HandlerFunc) http.HandlerFunc {
+func LoginHandler(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("name")
+	pass := r.FormValue("password")
+	redirectTarget := "/"
+	if name != "" && pass != "" {
+		// .. check credentials ..
+		setSession(name, w)
+		redirectTarget = "/internal"
+	}
+	http.Redirect(w, r, redirectTarget, http.StatusFound)
+}
+
+func LogoutHandler(w http.ResponseWriter, r *http.Request) {
+	clearSession(w)
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+func InternalPageHandler(w http.ResponseWriter, r *http.Request) {
+	username := getUserName(r)
+	if username != "" {
+		fmt.Fprintf(w, internalPage, username)
+	} else {
+		// sends back to index login page if auth failed
+		http.Redirect(w, r, "/", http.StatusFound)
+	}
+}
+
+func IndexPageHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, indexPage)
+}
+
+// SESSIONS
+
+func setSession(name string, w http.ResponseWriter) {
+	value := map[string]string{
+		"name": name,
+	}
+	if encoded, err := cookieHandler.Encode("session", value); err == nil {
+		cookie := &http.Cookie{
+			Name:  "session",
+			Value: encoded,
+			Path:  "/",
+		}
+		http.SetCookie(w, cookie)
+	}
+}
+
+func getUserName(r *http.Request) (username string) {
+	if cookie, err := r.Cookie("session"); err == nil {
+		cookieVal := make(map[string]string)
+		if err = cookieHandler.Decode("session", cookie.Value, &cookieVal); err == nil {
+			username = cookieVal["name"]
+		}
+	}
+	return username
+}
+
+func clearSession(w http.ResponseWriter) {
+	cookie := &http.Cookie{
+		Name:   "session",
+		Value:  "",
+		Path:   "/",
+		MaxAge: -1,
+	}
+	http.SetCookie(w, cookie)
+}
+
+// LOGIN AND LOGOUT HANDLERS USING COOKIES
+
+/*
+func LoginHandler(w http.ResponseWriter, r *http.Request)  {
+	session, err := store.Get(r "cookie-name")
+	if err != nil {
+		http.Error(w, "error getting the auth cookie on login", http.StatusInternalServerError)
+        return
+	}
+	// some auth here
+	// ...now set user as authenticated
+	session.Values["authenticated"] = true
+	err := session.Save(r, w)
+	if err != nil {
+		http.Error(w, "error saving the auth cookie on login", http.StatusInternalServerError)
+        return
+	}
+}
+
+func LogoutHandler(w http.ResponseWriter, r *http.Request)  {
+	session, err := store.Get(r "cookie-name")
+	if err != nil {
+		http.Error(w, "error getting the auth cookie on logout", http.StatusInternalServerError)
+        return
+	}
+	// remove the authentication status
+	session.Values["authenticated"] = false
+	err := session.Save(r, w)
+	if err != nil {
+		http.Error(w, "error saving the auth cookie on logout", http.StatusInternalServerError)
+        return
+	}
+}
+*/
+
+// AUTHENTICATION MIDDLEWARES
+
+func NeedsAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		username := getUserName(r)
+		if username == "" {
+			http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+		}
+		next(w, r)
+	}
+}
+
+func CookieAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, _ := store.Get(r, "cookie-name")
+		if auth, ok := session.Values["authenticated"].(bool); !ok || !auth {
+			http.Error(w, "Forbidden access", http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func BasicAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user, pass, _ := r.BasicAuth()
 		if user != username || pass != password {
 			http.Error(w, "unauthorized access :(", http.StatusUnauthorized)
 			return
 		}
-		h(w, r)
+		next(w, r)
 	}
 }
 
-func Base64Auth(h http.HandlerFunc) http.HandlerFunc {
+func Base64Auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("WWW-Authenticate", `Basic realm="restricted"`)
 		s := strings.SplitN(r.Header.Get("Authorization"), " ", 2)
 		if len(s) != 2 {
 			http.Error(w, "not authorized", http.StatusUnauthorized)
 		}
+	}
+}
+
+// LOGGING MIDDLEWARES
+
+func Logger(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("Hit at: %s, Request type = %s\n", r.URL.Path, r.Method)
+		next(w, r)
 	}
 }
 
@@ -178,24 +336,6 @@ func loadFile(r *http.Request, uri string) (*File, error) {
 	}
 }
 
-// TEMPLATES
-
-func (dir *Dir) Template(w *http.ResponseWriter) {
-	var fileBuf bytes.Buffer
-	for _, file := range dir.Files {
-		fileBuf.WriteString(file.getData())
-	}
-	fmt.Fprintf(*w, "<h1>Path/<br>%s</h1><p>Files/<br>%s</p>", dir.Path, fileBuf.String())
-}
-
-func (f *File) Template(w *http.ResponseWriter) {
-	fmt.Fprintf(*w, "<html><h2>%s</h2><br><h1>%s</h1><p>%s</p></html>", f.Path, f.Name, f.Content)
-}
-
-func errorTemplate(w *http.ResponseWriter, err error) {
-	fmt.Fprintf(*w, "<h1>An error happened: %s</h1>", err)
-}
-
 // TEST
 
 // TestHandler is the only handler that runs if "-test" flag is specified
@@ -238,6 +378,19 @@ func use(h http.HandlerFunc, middleware ...func(http.HandlerFunc) http.HandlerFu
 	return h
 }
 
+func WelcomeMessage() {
+	// register some constants for the messages
+	// print the welcome message and some hints
+	decor := strings.Repeat(char, line)
+	padding := char + strings.Repeat(space, pad) + char
+	empty := strings.Repeat(space, line)
+	// print a nice message
+	fmt.Printf("%s\n%s\n%s\n%s\n", empty, empty, decor, padding)
+	fmt.Println(char + "  Welcome to Dropgo, your filesystem exposed on the browser... yikes!!!  " + char)
+	fmt.Printf("%s\n%s\n%s\n%s\n", padding, decor, empty, empty)
+	log.Printf("Badass server going on @ %s\n", base_url)
+}
+
 // MAIN
 
 func main() {
@@ -247,28 +400,31 @@ func main() {
 	flag.Parse()
 	// set up logging
 	log.SetOutput(os.Stdout)
-	// register some constants for the messages
-	// print the welcome message and some hints
-	decor := strings.Repeat(char, line)
-	padding := char + strings.Repeat(space, pad) + char
-	empty := strings.Repeat(space, line)
-	fmt.Printf("%s\n%s\n%s\n%s\n", empty, empty, decor, padding)
-	fmt.Println(char + "  Welcome to Dropgo, your filesystem exposed on the browser... yikes!!!  " + char)
-	fmt.Printf("%s\n%s\n%s\n%s\n", padding, decor, empty, empty)
-	log.Printf("Badass server going on @ %s\n", base_url)
-	// register the base handler
-	http.HandleFunc("/", http.NotFound)
+	// pretty-print the welcome message in the terminal
+	WelcomeMessage()
+	// setting up the gorilla router
+	r := mux.NewRouter()
 	// register handlers conditionally
 	if *testMode {
+		// register the base handler in test version, 404 no login page
+		r.HandleFunc("/", use(http.NotFound, Logger)).Methods("GET")
+		// register test handler
 		log.Println("Running the test version")
-		http.HandleFunc(test_mapping, TestHandler)
+		r.HandleFunc("/test", use(TestHandler, Logger)).Methods("GET")
 		log.Printf("Test template @ %s\n", test_url)
 	} else {
+		// register the base handler in prod version, redirects and logs in
+		r.HandleFunc("/", use(IndexPageHandler, Logger)).Methods("GET")
 		log.Println("Running the default version")
-		// this handler needs auth
-		http.HandleFunc(dir_mapping, use(DirectoryHandler, BasicAuth))
+		// add login and logout handler
+		r.HandleFunc("/login", use(LoginHandler, Logger)).Methods("POST")
+		r.HandleFunc("/logout", use(LogoutHandler, Logger)).Methods("POST")
+		// add internal page
+		r.HandleFunc("/internal", use(InternalPageHandler, NeedsAuth, Logger)).Methods("GET")
+		// this handler needs auth change auth type here
+		r.HandleFunc("/dir", use(DirectoryHandler, NeedsAuth, Logger)).Methods("GET")
 		log.Printf("Dirs visible @ %s\n", dirs_url)
-		http.HandleFunc(file_mapping, FileHandler)
+		r.HandleFunc("/file", use(FileHandler, NeedsAuth, Logger)).Methods("GET")
 		log.Printf("File content shown @ %s\n", files_url)
 	}
 	// spawn the goroutine to handle the exit
@@ -280,7 +436,7 @@ func main() {
 		os.Exit(1)
 	}()
 	// serve the app and handle errors
-	err := http.ListenAndServe(port, nil)
+	err := http.ListenAndServe(port, r)
 	if err != nil {
 		log.Fatal("ListenAndServe Error: ", err)
 	}
