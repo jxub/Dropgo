@@ -93,7 +93,7 @@ func main() {
 	// pretty-print the welcome message in the terminal
 	WelcomeMessage()
 	// setting up the fileserver for static files
-	fs := http.FileServer(http.Dir("assets/"))
+	fs := http.FileServer(http.Dir("../assets/"))
 	// serving the files in the directory static
 	http.Handle("/static/", http.StripPrefix("/static/", fs))
 	// setting up the gorilla router
