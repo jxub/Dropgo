@@ -1,4 +1,4 @@
-package main
+package handlers
 
 import (
 	"errors"
@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
+	"github.com/jxub/Dropgo/src/helpers"
 )
 
 // LOADERS
 
-func LoadDir(r *http.Request, uri string) (*Dir, error) {
+func loadDir(r *http.Request, uri string) (*Dir, error) {
 	path := r.URL.Path[len(uri):] // get the path arg stripping the url
 	if len(path) == 0 {
 		path = "." // path for the current dir
@@ -35,15 +37,15 @@ func LoadDir(r *http.Request, uri string) (*Dir, error) {
 	for _, file := range dir {
 		name := file.Name()
 		filePath := dirPath + "/" + name
-		isdir, err := IsDir(filePath)
-		Check(err)
+		isdir, err := helpers.IsDir(filePath)
+		helpers.Check(err)
 		f := &File{Name: name, Path: filePath, Content: nil, IsDir: isdir}
 		files = append(files, *f)
 	}
 	return &Dir{Path: dirPath, Files: files}, nil
 }
 
-func LoadFile(r *http.Request, uri string) (*File, error) {
+func loadFile(r *http.Request, uri string) (*File, error) {
 	// rooted path for the file
 	path := r.URL.Path[len(uri):]
 	// if no path is specified

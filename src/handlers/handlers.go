@@ -1,16 +1,42 @@
-package main
+package handlers
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"github.com/jxub/Dropgo/src/middleware"
+)
+
+const (
+	// html templates
+	indexPage = `
+		<h1>Dropgo</h1>
+		<h3>Login</h3>
+		<form method="post" action="/login">
+    	<label for="name">Username</label>
+    	<input type="text" id="name" name="name">
+    	<label for="password">Password</label>
+    	<input type="password" id="password" name="password">
+    	<button type="submit">Login</button>
+		</form>`
+	internalPage = `
+		<h1>Dropgo</h1>
+		<h3>Dashboard</h3>
+		<hr>
+		<small>User: %s</small>
+		<form method="post" action="/logout">
+    	<button type="submit">Logout</button>
+		</form>`
+	// constant for json formatting
+	indent = "	"
 )
 
 // CONTENT HANDLERS
 
 // DirectoryHandler serves the requests to the /dir/ path
 func DirectoryHandler(w http.ResponseWriter, r *http.Request) {
-	dir, err := LoadDir(r, "/dir")
+	dir, err := loadDir(r, "/dir")
 	if err != nil {
 		http.Error(w, "error loading the directory", http.StatusInternalServerError)
 	}
@@ -23,7 +49,7 @@ func DirectoryHandler(w http.ResponseWriter, r *http.Request) {
 
 // FileHandler serves the requests to the /file/ path
 func FileHandler(w http.ResponseWriter, r *http.Request) {
-	f, err := LoadFile(r, "/file")
+	f, err := loadFile(r, "/file")
 	if err != nil {
 		http.Error(w, "error loading the file", http.StatusInternalServerError)
 	}
@@ -41,7 +67,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	redirectTarget := "/"
 	if name != "" && pass != "" {
 		// .. check credentials ..
-		err := SetSession(name, pass, w)
+		err := middleware.SetSession(name, pass, w)
 		if err != nil {
 			http.Redirect(w, r, redirectTarget, http.StatusFound)
 		}
@@ -52,7 +78,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 
 // LogoutHandler erases the session cookie and redirects to login page
 func LogoutHandler(w http.ResponseWriter, r *http.Request) {
-	ClearSession(w)
+	middleware.ClearSession(w)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -60,7 +86,7 @@ func LogoutHandler(w http.ResponseWriter, r *http.Request) {
 // because previously the NeedsAuth middleware checks if user is logged in
 // as it is registered in the handler in main()
 func InternalPageHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, internalPage, userCfg)
+	fmt.Fprintf(w, internalPage, middleware.UserCfg)
 }
 
 // IndexPageHandler renders the login index page

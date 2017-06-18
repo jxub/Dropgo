@@ -1,11 +1,18 @@
-package main
+package helpers
 
 import (
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strings"
+)
+
+const (
+	// constants for stdout formatting
+	line  = 75
+	pad   = 73
+	char  = "#"
+	space = " "
 )
 
 // HELPERS
@@ -13,14 +20,6 @@ import (
 func IsDir(path string) (bool, error) {
 	fileInfo, err := os.Stat(path)
 	return fileInfo.IsDir(), err
-}
-
-func (f *File) GetData() string {
-	return fmt.Sprintf("%s\n%s\n%s", f.Name, f.Path, string(f.Content[:]))
-}
-
-func (f *File) Snapshot() (*string, *string) {
-	return &f.Name, &f.Path
 }
 
 func Check(err error) {
@@ -36,7 +35,7 @@ func Use(h http.HandlerFunc, middleware ...func(http.HandlerFunc) http.HandlerFu
 	return h
 }
 
-// CONVERTERS
+// MESSAGES
 
 func WelcomeMessage() {
 	// register some constants for the messages
@@ -48,5 +47,4 @@ func WelcomeMessage() {
 	fmt.Printf("%s\n%s\n%s\n%s\n", empty, empty, decor, padding)
 	fmt.Println(char + "  Welcome to Dropgo, your filesystem exposed on the browser... yikes!!!  " + char)
 	fmt.Printf("%s\n%s\n%s\n%s\n", padding, decor, empty, empty)
-	log.Printf("Badass server going on @ %s\n", baseURL)
 }
