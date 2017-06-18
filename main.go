@@ -17,7 +17,7 @@ import (
 	"github.com/gorilla/securecookie"
 )
 
-// CONF CONSTANTS
+// CONFIG CONSTANTS
 
 const (
 	// configuration constants for port and urls
@@ -27,8 +27,8 @@ const (
 	dirs_url  = base_url + "/dir"
 	test_url  = base_url + "/test"
 	// constants for login
-	username = "admin"
-	password = "admin"
+	userCfg = "admin"
+	passCfg = "admin"
 	// constants for stdout formatting
 	line  = 75
 	pad   = 73
@@ -38,7 +38,8 @@ const (
 	indent = "	"
 	// html templates
 	indexPage = `
-		<h1>Login</h1>
+		<h1>Dropgo</h1>
+		<h3>Login</h3>
 		<form method="post" action="/login">
     	<label for="name">Username</label>
     	<input type="text" id="name" name="name">
@@ -47,7 +48,8 @@ const (
     	<button type="submit">Login</button>
 		</form>`
 	internalPage = `
-		<h1>Internal</h1>
+		<h1>Dropgo</h1>
+		<h3>Dashboard</h3>
 		<hr>
 		<small>User: %s</small>
 		<form method="post" action="/logout">
@@ -112,42 +114,50 @@ func FileHandler(w http.ResponseWriter, r *http.Request) {
 
 // HANDLERS FOR LOGGING IN AND OUT, AND RENDERING INTERNAL AND EXTERNAL PAGES
 
+// LoginHandler parses the form from the login template and sets the session cookie
 func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("name")
 	pass := r.FormValue("password")
 	redirectTarget := "/"
 	if name != "" && pass != "" {
 		// .. check credentials ..
-		setSession(name, w)
+		err := setSession(name, pass, w)
+		if err != nil {
+			http.Redirect(w, r, redirectTarget, http.StatusFound)
+		}
 		redirectTarget = "/internal"
 	}
 	http.Redirect(w, r, redirectTarget, http.StatusFound)
 }
 
+// LogoutHandler erases the session cookie and redirects to login page
 func LogoutHandler(w http.ResponseWriter, r *http.Request) {
 	clearSession(w)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
+// InternalPageHandler renders the internal page for the user
+// because previously the NeedsAuth middleware checks if user is logged in
+// as it is registered in the handler in main()
 func InternalPageHandler(w http.ResponseWriter, r *http.Request) {
-	username := getUserName(r)
-	if username != "" {
-		fmt.Fprintf(w, internalPage, username)
-	} else {
-		// sends back to index login page if auth failed
-		http.Redirect(w, r, "/", http.StatusFound)
-	}
+	fmt.Fprintf(w, internalPage, userCfg)
 }
 
+// IndexPageHandler renders the login index page
 func IndexPageHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, indexPage)
 }
 
 // SESSIONS
 
-func setSession(name string, w http.ResponseWriter) {
+func setSession(username string, password string, w http.ResponseWriter) error {
+	// check if the username sent is correct to avoid storing it
+	if username != userCfg || password != passCfg {
+		return errors.New("failed login attempt")
+	}
 	value := map[string]string{
-		"name": name,
+		"name":     username,
+		"password": password,
 	}
 	if encoded, err := cookieHandler.Encode("session", value); err == nil {
 		cookie := &http.Cookie{
@@ -157,16 +167,19 @@ func setSession(name string, w http.ResponseWriter) {
 		}
 		http.SetCookie(w, cookie)
 	}
+	return nil
 }
 
-func getUserName(r *http.Request) (username string) {
+// renme
+func getUserSession(r *http.Request) (username string, password string) {
 	if cookie, err := r.Cookie("session"); err == nil {
 		cookieVal := make(map[string]string)
 		if err = cookieHandler.Decode("session", cookie.Value, &cookieVal); err == nil {
 			username = cookieVal["name"]
+			password = cookieVal["password"]
 		}
 	}
-	return username
+	return username, password
 }
 
 func clearSession(w http.ResponseWriter) {
@@ -179,82 +192,16 @@ func clearSession(w http.ResponseWriter) {
 	http.SetCookie(w, cookie)
 }
 
-// LOGIN AND LOGOUT HANDLERS USING COOKIES
+// AUTHENTICATION MIDDLEWARE
 
-/*
-func LoginHandler(w http.ResponseWriter, r *http.Request)  {
-	session, err := store.Get(r "cookie-name")
-	if err != nil {
-		http.Error(w, "error getting the auth cookie on login", http.StatusInternalServerError)
-        return
-	}
-	// some auth here
-	// ...now set user as authenticated
-	session.Values["authenticated"] = true
-	err := session.Save(r, w)
-	if err != nil {
-		http.Error(w, "error saving the auth cookie on login", http.StatusInternalServerError)
-        return
-	}
-}
-
-func LogoutHandler(w http.ResponseWriter, r *http.Request)  {
-	session, err := store.Get(r "cookie-name")
-	if err != nil {
-		http.Error(w, "error getting the auth cookie on logout", http.StatusInternalServerError)
-        return
-	}
-	// remove the authentication status
-	session.Values["authenticated"] = false
-	err := session.Save(r, w)
-	if err != nil {
-		http.Error(w, "error saving the auth cookie on logout", http.StatusInternalServerError)
-        return
-	}
-}
-*/
-
-// AUTHENTICATION MIDDLEWARES
-
+// NeedsAuth is the cheking middleware for session-based auth
 func NeedsAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		username := getUserName(r)
-		if username == "" {
-			http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+		username, password := getUserSession(r)
+		if username != userCfg || password != passCfg {
+			http.Redirect(w, r, "/", http.StatusFound)
 		}
 		next(w, r)
-	}
-}
-
-func CookieAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		session, _ := store.Get(r, "cookie-name")
-		if auth, ok := session.Values["authenticated"].(bool); !ok || !auth {
-			http.Error(w, "Forbidden access", http.StatusForbidden)
-			return
-		}
-		next(w, r)
-	}
-}
-
-func BasicAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		user, pass, _ := r.BasicAuth()
-		if user != username || pass != password {
-			http.Error(w, "unauthorized access :(", http.StatusUnauthorized)
-			return
-		}
-		next(w, r)
-	}
-}
-
-func Base64Auth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("WWW-Authenticate", `Basic realm="restricted"`)
-		s := strings.SplitN(r.Header.Get("Authorization"), " ", 2)
-		if len(s) != 2 {
-			http.Error(w, "not authorized", http.StatusUnauthorized)
-		}
 	}
 }
 
@@ -262,9 +209,17 @@ func Base64Auth(next http.HandlerFunc) http.HandlerFunc {
 
 func Logger(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Hit at: %s, Request type = %s\n", r.URL.Path, r.Method)
+		log.Printf("Hit at: %s, Request type = %s, Cookie = %s", r.URL.Path, r.Method, LogCookie(r))
 		next(w, r)
 	}
+}
+
+// helper for Logger that shows the cookies that a client has
+func LogCookie(r *http.Request) string {
+	if _, err := r.Cookie("session"); err == nil {
+		return "session cookie"
+	}
+	return "no cookie"
 }
 
 // LOADERS
@@ -329,6 +284,8 @@ func loadFile(r *http.Request, uri string) (*File, error) {
 	}
 }
 
+// CONVERTERS
+
 // TEST
 
 // TestHandler is the only handler that runs if "-test" flag is specified
@@ -371,7 +328,7 @@ func use(h http.HandlerFunc, middleware ...func(http.HandlerFunc) http.HandlerFu
 	return h
 }
 
-func WelcomeMessage() {
+func welcomeMessage() {
 	// register some constants for the messages
 	// print the welcome message and some hints
 	decor := strings.Repeat(char, line)
@@ -394,9 +351,11 @@ func main() {
 	// set up logging
 	log.SetOutput(os.Stdout)
 	// pretty-print the welcome message in the terminal
-	WelcomeMessage()
+	welcomeMessage()
 	// setting up the fileserver for static files
 	fs := http.FileServer(http.Dir("assets/"))
+	// serving the files in the directory static
+	http.Handle("/static/", http.StripPrefix("/static/", fs))
 	// setting up the gorilla router
 	r := mux.NewRouter()
 	// register handlers conditionally
