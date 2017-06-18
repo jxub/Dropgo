@@ -1,7 +1,6 @@
 package main
 
 import (
-	_ "bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -16,8 +15,6 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/securecookie"
-	"github.com/gorilla/sessions"
-	_ "golang.org/x/crypto/bcrypt"
 )
 
 // CONF CONSTANTS
@@ -61,10 +58,6 @@ const (
 // SESSIONS SETUP
 
 var (
-	// key must have length 16, 24 or 32
-	// we use 32 bytes and AES-256 encryption
-	key           = []byte("another-secret-key-bite-the-dust")
-	store         = sessions.NewCookieStore(key)
 	cookieHandler = securecookie.New(
 		securecookie.GenerateRandomKey(64),
 		securecookie.GenerateRandomKey(32))
@@ -402,35 +395,41 @@ func main() {
 	log.SetOutput(os.Stdout)
 	// pretty-print the welcome message in the terminal
 	WelcomeMessage()
+	// setting up the fileserver for static files
+	fs := http.FileServer(http.Dir("assets/"))
 	// setting up the gorilla router
 	r := mux.NewRouter()
 	// register handlers conditionally
 	if *testMode {
+		log.Println("Running the test version")
 		// register the base handler in test version, 404 no login page
 		r.HandleFunc("/", use(http.NotFound, Logger)).Methods("GET")
-		// register test handler
-		log.Println("Running the test version")
+		// register test handler, and log its url
 		r.HandleFunc("/test", use(TestHandler, Logger)).Methods("GET")
 		log.Printf("Test template @ %s\n", test_url)
 	} else {
+		log.Println("Running the default version")
 		// register the base handler in prod version, redirects and logs in
 		r.HandleFunc("/", use(IndexPageHandler, Logger)).Methods("GET")
-		log.Println("Running the default version")
-		// add login and logout handler
+		// add login handler
 		r.HandleFunc("/login", use(LoginHandler, Logger)).Methods("POST")
+		// add logout handler
 		r.HandleFunc("/logout", use(LogoutHandler, Logger)).Methods("POST")
 		// add internal page
 		r.HandleFunc("/internal", use(InternalPageHandler, NeedsAuth, Logger)).Methods("GET")
-		// this handler needs auth change auth type here
+		// add dir handler, and log its url
 		r.HandleFunc("/dir", use(DirectoryHandler, NeedsAuth, Logger)).Methods("GET")
 		log.Printf("Dirs visible @ %s\n", dirs_url)
+		// add file handler, and log its url
 		r.HandleFunc("/file", use(FileHandler, NeedsAuth, Logger)).Methods("GET")
 		log.Printf("File content shown @ %s\n", files_url)
 	}
 	// spawn the goroutine to handle the exit
 	c := make(chan os.Signal, 1)
+	// notify if CTRL-C is clicked
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go func() {
+		// block waiting for the signal bound to channel c
 		<-c
 		log.Println("Quitting Dropgo... See you!")
 		os.Exit(1)
